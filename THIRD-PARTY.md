@@ -3,7 +3,7 @@
 Haru VPS MCP has two different dependency layers. Keeping them separate matters for both maintenance and licensing:
 
 1. **Gateway package dependencies** are Python packages imported by this repository itself.
-2. **Optional workspace-backend composition** is a separately installed set of upstream MCP programs used to provide the loopback filesystem and development-shell endpoints behind the gateway; Haru's file-ingress child is repository-owned and not a third-party server.
+2. **Optional workspace-backend composition** is a separately installed set of upstream MCP programs used to provide the loopback filesystem and development-shell endpoints behind the gateway; Haru's file-transfer child is repository-owned and not a third-party server.
 
 The workspace components below are **composed**, not vendored, forked, patched, or reimplemented in this repository. Their source code and licenses remain with their upstream projects.
 

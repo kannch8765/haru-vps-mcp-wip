@@ -139,6 +139,72 @@ def test_destination_must_remain_under_workspace(tmp_path: Path) -> None:
             ingress._safe_destination(workspace, bad)
 
 
+
+def test_export_source_must_remain_under_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "out").mkdir()
+    (workspace / "out" / "file.bin").write_bytes(b"ok")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.bin").write_bytes(b"secret")
+    (workspace / "escape").symlink_to(outside, target_is_directory=True)
+
+    assert ingress._safe_source(workspace, "out/file.bin") == workspace / "out" / "file.bin"
+    for bad in ("/tmp/file.bin", "../file.bin", "escape/secret.bin", "missing.bin", "out"):
+        with pytest.raises(ValueError):
+            ingress._safe_source(workspace, bad)
+
+
+def test_prepare_workspace_file_export_returns_bounded_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "report.txt"
+    target.write_bytes(b"hello")
+    monkeypatch.chdir(workspace)
+
+    result = ingress.prepare_workspace_file_export("report.txt")
+    assert result == {
+        "path": "report.txt",
+        "name": "report.txt",
+        "bytes": 5,
+        "mime_type": "text/plain",
+    }
+
+
+def test_read_workspace_file_export_preserves_binary_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    body = b"binary\x00payload\xff"
+    (workspace / "artifact.bin").write_bytes(body)
+    monkeypatch.chdir(workspace)
+
+    token = __import__("base64").urlsafe_b64encode(b"artifact.bin").decode("ascii").rstrip("=")
+    assert ingress.read_workspace_export_resource(token) == body
+
+
+def test_workspace_file_export_enforces_size_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "large.bin").write_bytes(b"12345")
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(ingress, "MAX_FILE_BYTES", 4)
+
+    with pytest.raises(ValueError, match="export limit"):
+        ingress.prepare_workspace_file_export("large.bin")
+    token = __import__("base64").urlsafe_b64encode(b"large.bin").decode("ascii").rstrip("=")
+    with pytest.raises(ValueError, match="export limit"):
+        ingress.read_workspace_export_resource(token)
+
 def test_download_streams_to_temp_and_hashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -299,6 +365,14 @@ def test_child_mcp_tool_schema_matches_openai_file_contract() -> None:
 
     server = ingress.build_server()
     listed = asyncio.run(server.list_tools())
+    assert {tool.name for tool in listed} == {
+        "import_chatgpt_file",
+        "prepare_workspace_file_export",
+    }
+    templates = asyncio.run(server.list_resource_templates())
+    assert {str(item.uriTemplate) for item in templates} == {
+        "haru-workspace-file://export/{token}"
+    }
     tool = next(tool for tool in listed if tool.name == "import_chatgpt_file")
     schema = tool.inputSchema
     file_schema = schema["properties"]["file"]

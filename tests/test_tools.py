@@ -43,3 +43,38 @@ async def test_chatgpt_file_import_delegates_to_bounded_child(monkeypatch):
     assert captured["arguments"]["destination"] == "inbox/copied.bin"
     assert captured["arguments"]["overwrite"] is False
     assert captured["timeout_seconds"] == 90.0
+
+
+async def test_workspace_file_export_delegates_to_bounded_child(monkeypatch):
+    tool_calls = []
+    resource_calls = []
+
+    async def fake_delegate(endpoint, tool_name, arguments, *, timeout_seconds):
+        tool_calls.append((endpoint, tool_name, arguments, timeout_seconds))
+        return "ok"
+
+    async def fake_resource(endpoint, uri, *, timeout_seconds):
+        resource_calls.append((endpoint, uri, timeout_seconds))
+        return "resource"
+
+    monkeypatch.setattr(tools, "delegate_backend_tool", fake_delegate)
+    monkeypatch.setattr(tools, "delegate_backend_resource", fake_resource)
+    cfg = load_settings(env={})
+
+    assert await tools.workspace_prepare_file_export(cfg, "out/report.bin") == "ok"
+    assert await tools.workspace_read_file_export_resource(cfg, "token123") == "resource"
+    assert tool_calls == [
+        (
+            cfg.workspace_file_ingress_url,
+            "prepare_workspace_file_export",
+            {"path": "out/report.bin"},
+            90.0,
+        ),
+    ]
+    assert resource_calls == [
+        (
+            cfg.workspace_file_ingress_url,
+            "haru-workspace-file://export/token123",
+            90.0,
+        ),
+    ]
