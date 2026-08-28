@@ -139,7 +139,7 @@ If a fail-closed public reverse-proxy example such as `deploy/Caddyfile.example`
 Keep the layers separate while diagnosing:
 
 1. **Gateway:** is Haru MCP running and reachable locally on its loopback URL?
-2. **Workspace backend:** can Haru delegate to the filesystem/shell/file-ingress endpoints?
+2. **Workspace backend:** can Haru delegate to the filesystem/shell/file-transfer endpoints?
 3. **Tunnel client:** is the current client active, and do its supported local diagnostics pass?
 4. **Remote acceptance:** can the OpenAI client discover tools and make a harmless call?
 

@@ -37,3 +37,11 @@ async def test_chatgpt_file_import_advertises_host_file_contract():
         "mime_type",
         "file_name",
     }
+
+
+async def test_workspace_file_export_is_exposed_as_resource_link_tool():
+    listed = await build_server(load_settings(env={})).list_tools()
+    tool = next(item for item in listed if item.name == "workspace_export_file")
+    assert set(tool.inputSchema["required"]) == {"path"}
+    templates = await build_server(load_settings(env={})).list_resource_templates()
+    assert any(str(item.uriTemplate) == "haru-workspace://export/{token}" for item in templates)

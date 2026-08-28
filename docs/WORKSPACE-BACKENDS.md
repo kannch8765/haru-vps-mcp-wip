@@ -1,6 +1,6 @@
 # Workspace backends
 
-Haru VPS MCP is a gateway facade. Its filesystem, shell, and file-import tools delegate to **separate MCP servers on loopback**. This guide shows a public-safe reference composition using the upstream components recorded in [`THIRD-PARTY.md`](../THIRD-PARTY.md).
+Haru VPS MCP is a gateway facade. Its filesystem, shell, and file-transfer tools delegate to **separate MCP servers on loopback**. This guide shows a public-safe reference composition using the upstream components recorded in [`THIRD-PARTY.md`](../THIRD-PARTY.md).
 
 The intended boundary is:
 
@@ -17,8 +17,8 @@ Haru MCP gateway
        |       -> same disposable workspace
        |
        +--> http://127.0.0.1:8766/servers/file-ingress/mcp
-               -> Haru file-ingress stdio child
-               -> bounded HTTPS download into the same workspace
+               -> Haru bounded file-transfer stdio child
+               -> bounded import/export in the same workspace
 ```
 
 There is **no second public hostname** for this backend layer. Keep the listener on loopback and let only the Haru gateway talk to it.
@@ -29,9 +29,9 @@ The shell server is a privileged development capability: it can execute commands
 
 Use a dedicated unprivileged service identity and a dedicated/disposable workspace. For the basic single-host example, the same non-sudo `haru` account can run the Haru gateway and workspace backend; splitting those two services into separate identities is optional defense in depth. Do not place production credentials, SSH agents, host administration files, container-engine sockets, cloud credentials, or unrelated application data inside that workspace or its service environment.
 
-The filesystem server must be started with the workspace root as its allowed root. The shell server and file-ingress child use the same directory as their working directory. Systemd hardening is useful defense in depth, but it does not make arbitrary shell execution safe against secrets that the service account can already read.
+The filesystem server must be started with the workspace root as its allowed root. The shell server and file-transfer child use the same directory as their working directory. Systemd hardening is useful defense in depth, but it does not make arbitrary shell execution safe against secrets that the service account can already read.
 
-The file-ingress child is intentionally narrower than a generic downloader. It accepts the ChatGPT host file-reference shape, requires HTTPS on the approved OpenAI storage host patterns, rejects credentials/fragments/non-public DNS answers, pins the connection to a validated public address while preserving TLS hostname verification, follows at most three revalidated redirects, caps each file at 100 MiB, and writes atomically beneath the workspace root. The destination is relative, its parent directory must already exist, and overwrite is off by default. Do not broaden this child into arbitrary URL fetching.
+The file-transfer child is intentionally narrow. For import, it accepts the ChatGPT host file-reference shape, requires HTTPS on approved OpenAI storage host patterns, rejects credentials/fragments/non-public DNS answers, pins the connection to a validated public address while preserving TLS hostname verification, follows at most three revalidated redirects, caps each file at 100 MiB, and writes atomically beneath the workspace root. For export, it accepts only workspace-relative regular files that resolve beneath the same root, caps each file at 100 MiB, and returns bytes through MCP resource content. The gateway exposes those bytes through a `ResourceLink`; it does not create a second public file URL. Do not broaden the child into arbitrary URL fetching or host filesystem reads.
 
 ## Reference versions
 
@@ -54,7 +54,7 @@ The paths below are examples, not required Haru paths:
 /srv/haru-workspace/              disposable workspace data
 /opt/haru-workspace/proxy/        Python virtual environment for mcp-proxy
 /opt/haru-workspace/node/         Node package installation
-/opt/haru-workspace/file_ingress_server.py  Haru bounded file-ingress child
+/opt/haru-workspace/file_ingress_server.py  Haru bounded file-transfer child
 /etc/haru-workspace/servers.json  non-secret named-server configuration
 /var/lib/haru-workspace/home/     service HOME
 /var/lib/haru-workspace/tmp/      service temporary directory
@@ -82,7 +82,7 @@ npm install --omit=dev \
 
 For a stricter deployment, build/package these dependencies in a separate staging environment and install verified artifacts into an owner-controlled prefix. Do not treat mutable global `pip` or `npm` state as a deployment record.
 
-Install a reviewed copy of [`deploy/workspace/file_ingress_server.py`](../deploy/workspace/file_ingress_server.py) as `/opt/haru-workspace/file_ingress_server.py`, owned by the operator and not writable by the runtime service account. It uses only the Python standard library plus `typing-extensions` and the already-selected MCP Python stack.
+Install a reviewed copy of [`deploy/workspace/file_ingress_server.py`](../deploy/workspace/file_ingress_server.py) as `/opt/haru-workspace/file_ingress_server.py`, owned by the operator and not writable by the runtime service account. The legacy filename/backend name is kept for deployment compatibility; the child provides both bounded import and export. It uses only the Python standard library plus `typing-extensions` and the already-selected MCP Python stack.
 
 ## Configure named stdio servers
 
@@ -187,12 +187,13 @@ Check the layers separately:
 1. **Listener:** confirm the workspace proxy is listening on loopback only.
 2. **Proxy status:** `mcp-proxy` provides a global `/status` endpoint; use it as a local process/composition signal, not as proof that every delegated tool is correct.
 3. **Gateway health:** confirm Haru's `health` tool still works.
-4. **Discovery:** from an MCP client through Haru, confirm the workspace filesystem, file-import, and shell tools are present.
+4. **Discovery:** from an MCP client through Haru, confirm the workspace filesystem, file-import, file-export, and shell tools are present.
 5. **Filesystem smoke:** list or read a harmless file inside the disposable workspace.
 6. **File-ingress smoke:** from ChatGPT, pass a harmless current-conversation file to `workspace_import_chatgpt_file` and verify its returned byte count/hash and destination. Confirm a raw unregistered local path is not treated as a file reference by the client host.
 7. **File-ingress negative boundary:** reject an absolute/escaping destination, a missing parent directory, an existing destination without `overwrite=true`, and any non-approved/non-HTTPS download host at the child boundary.
-8. **Shell smoke:** run a harmless command such as `pwd` and verify it resolves inside the intended workspace.
-9. **Negative filesystem boundary:** verify a filesystem request outside the configured root is rejected by the filesystem server.
+8. **File-export smoke:** export a harmless binary file with `workspace_export_file`, read the returned resource, and verify the bytes match. Reject absolute paths, `..` escapes, directories, symlinks that resolve outside the workspace, missing files, and files above 100 MiB.
+9. **Shell smoke:** run a harmless command such as `pwd` and verify it resolves inside the intended workspace.
+10. **Negative filesystem boundary:** verify a filesystem request outside the configured root is rejected by the filesystem server.
 
 A healthy Haru gateway does not prove the delegated backend is healthy. Conversely, a backend failure should make delegated calls fail; it should not make the gateway start exposing a different/public backend.
 

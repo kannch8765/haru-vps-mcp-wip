@@ -4,7 +4,7 @@
 
 **Setup guide:** [Notion-style web note (中文 / English)](https://kohaku4yz.github.io/haru-vps-mcp/)
 
-Haru VPS MCP is a small self-hosted MCP gateway for an isolated VPS workspace. It gives an MCP client a narrow filesystem/shell/file-import facade without making the host itself the workspace.
+Haru VPS MCP is a small self-hosted MCP gateway for an isolated VPS workspace. It gives an MCP client a narrow filesystem/shell/file-transfer facade without making the host itself the workspace.
 
 ```text
 ChatGPT / MCP client
@@ -18,8 +18,8 @@ ChatGPT / MCP client
    +------+------+
    |      |      |
    v      v      v
-filesystem shell file-ingress
- backend   backend backend
+filesystem shell file-transfer
+ backend   backend  child
  loopback  loopback loopback
    |      |      |
    +------v------+
@@ -33,6 +33,7 @@ Haru MCP exposes powerful workspace filesystem and shell tools, so treat the end
 - The gateway refuses non-loopback bind addresses.
 - Workspace backend URLs must be explicit loopback HTTP endpoints and cannot contain credentials.
 - ChatGPT file ingress accepts only host-supplied file references, restricts downloads to approved OpenAI storage hosts over HTTPS, pins validated public DNS addresses before connecting, caps imports at 100 MiB, and writes only beneath the workspace root.
+- Workspace file export accepts only workspace-relative regular files that resolve beneath the workspace root, caps exports at 100 MiB, and returns an MCP `ResourceLink` instead of creating a public download URL.
 - Do not hand-craft file download URLs or treat raw client/sandbox paths as file references. The MCP host is responsible for supplying the `file` object declared through `openai/fileParams`.
 - The backend itself gets no second public hostname; it stays behind the gateway on loopback.
 - Optional public Host/Origin allowlists are request/transport hardening only. **They are not authentication.**
@@ -77,13 +78,13 @@ http://127.0.0.1:8766/servers/shell/mcp
 http://127.0.0.1:8766/servers/file-ingress/mcp
 ```
 
-Those endpoints are a **separate workspace-backend composition**. To build them from the selected upstream components plus Haru's bounded file-ingress child, follow [`docs/WORKSPACE-BACKENDS.md`](docs/WORKSPACE-BACKENDS.md).
+Those endpoints are a **separate workspace-backend composition**. To build them from the selected upstream components plus Haru's bounded file-transfer child, follow [`docs/WORKSPACE-BACKENDS.md`](docs/WORKSPACE-BACKENDS.md).
 
-The public tool surface is deliberately small: gateway health, workspace directory listing/read/write/edit/move/stat, ChatGPT file import, and isolated shell execution delegated to the loopback backends. `workspace_import_chatgpt_file` is declared with `openai/fileParams` so the ChatGPT host can replace a current-conversation file with a short-lived file reference before the MCP call.
+The public tool surface is deliberately small: gateway health, workspace directory listing/read/write/edit/move/stat, ChatGPT file import, workspace file export, and isolated shell execution delegated to the loopback backends. `workspace_import_chatgpt_file` is declared with `openai/fileParams` so the ChatGPT host can replace a current-conversation file with a short-lived file reference before the MCP call. `workspace_export_file` returns an MCP `ResourceLink`; a compatible client can read that resource and present the workspace file as a downloadable file.
 
 ## Operator documentation
 
-- [`docs/WORKSPACE-BACKENDS.md`](docs/WORKSPACE-BACKENDS.md) — build and operate the loopback filesystem/shell/file-ingress composition.
+- [`docs/WORKSPACE-BACKENDS.md`](docs/WORKSPACE-BACKENDS.md) — build and operate the loopback filesystem/shell/file-transfer composition.
 - [`docs/SECURE-TUNNEL.md`](docs/SECURE-TUNNEL.md) — server-side Secure MCP Tunnel boundary, service supervision, fail-closed recovery, and real-client acceptance.
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — gateway service operations, layered health, upgrades/rollback, repository exact-head discipline, process hygiene, and secrets.
 - [`deploy/haru-mcp.service.example`](deploy/haru-mcp.service.example) — minimal hardened systemd starting point.

@@ -116,8 +116,8 @@ footer{margin-top:52px;color:var(--muted);font-size:.82rem}
     <h1>Haru VPS MCP</h1>
     <blockquote class="subtitle">A mini tunnel to a mini computer for ChatGPT.</blockquote>
     <div class="lede">
-      <p data-lang-only="zh">这是一个给 AI 一台“小电脑”的自托管 MCP Gateway。它把 filesystem / shell / file import 能力收进一个<strong>独立、可丢弃的 workspace</strong>，再通过 MCP 让 ChatGPT 或其他可信客户端使用；host 本身不是 workspace，Haru 和 workspace backend 也都默认只监听 loopback。</p>
-      <p data-lang-only="en">This is a self-hosted MCP gateway that gives an AI a tiny computer of its own. It puts filesystem / shell / file import capabilities inside an <strong>independent, disposable workspace</strong>, then exposes them over MCP to ChatGPT or another trusted client. The host itself is not the workspace, and both Haru and the workspace backend bind to loopback by default.</p>
+      <p data-lang-only="zh">这是一个给 AI 一台“小电脑”的自托管 MCP Gateway。它把 filesystem / shell / file transfer 能力收进一个<strong>独立、可丢弃的 workspace</strong>，再通过 MCP 让 ChatGPT 或其他可信客户端使用；host 本身不是 workspace，Haru 和 workspace backend 也都默认只监听 loopback。</p>
+      <p data-lang-only="en">This is a self-hosted MCP gateway that gives an AI a tiny computer of its own. It puts filesystem / shell / file transfer capabilities inside an <strong>independent, disposable workspace</strong>, then exposes them over MCP to ChatGPT or another trusted client. The host itself is not the workspace, and both Haru and the workspace backend bind to loopback by default.</p>
     </div>
     <figure class="architecture">
       <pre><code>                    your Linux machine
@@ -132,7 +132,7 @@ MCP     │  127.0.0.1:8765                 │
         │  127.0.0.1:8766                 │
         │      |       |       |          │
         │      v       v       v          │
-        │ filesystem  shell  file import   │
+        │ filesystem shell  file transfer    │
         │      \       |       /          │
         │       \      |      /           │
         │        v      v     v            │
