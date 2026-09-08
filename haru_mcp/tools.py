@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ _BACKEND_TIMEOUT: Final[str] = "backend_timeout"
 _BACKEND_UNREACHABLE: Final[str] = "backend_unreachable"
 _BACKEND_SESSION_CLOSED: Final[str] = "backend_session_closed"
 _BACKEND_PROTOCOL_ERROR: Final[str] = "backend_protocol_error"
+_BACKEND_TOOL_ERROR: Final[str] = "backend_tool_error"
 _BACKEND_CALL_TIMEOUT_SECONDS: Final[float] = 30.0
 _FILE_TRANSFER_CALL_TIMEOUT_SECONDS: Final[float] = 90.0
 _BACKEND_HEALTH_TIMEOUT_SECONDS: Final[float] = 3.0
@@ -33,6 +35,7 @@ _SHELL_DEFAULT_WAIT_MS: Final[int] = 5000
 _SHELL_MAX_WAIT_MS: Final[int] = 25000
 _SHELL_MAX_HARD_TIMEOUT_MS: Final[int] = 7 * 24 * 60 * 60 * 1000
 _SAFE_TRACEBACK_FRAMES: Final[int] = 12
+_BASE_EXCEPTION_GROUP = getattr(builtins, "BaseExceptionGroup", None)
 
 
 class HealthResult(TypedDict):
@@ -85,7 +88,7 @@ def _traceback_frames(exc: BaseException) -> list[str]:
     def collect(current: BaseException) -> None:
         for frame in traceback.extract_tb(current.__traceback__):
             frames.append(f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}")
-        if isinstance(current, BaseExceptionGroup):
+        if _BASE_EXCEPTION_GROUP is not None and isinstance(current, _BASE_EXCEPTION_GROUP):
             for child in current.exceptions:
                 collect(child)
 
@@ -94,7 +97,7 @@ def _traceback_frames(exc: BaseException) -> list[str]:
 
 
 def _classify_backend_exception(exc: BaseException) -> str:
-    if isinstance(exc, BaseExceptionGroup):
+    if _BASE_EXCEPTION_GROUP is not None and isinstance(exc, _BASE_EXCEPTION_GROUP):
         categories = {_classify_backend_exception(child) for child in exc.exceptions}
         for preferred in (_BACKEND_TIMEOUT, _BACKEND_UNREACHABLE, _BACKEND_SESSION_CLOSED):
             if preferred in categories:
@@ -116,7 +119,8 @@ def _backend_failure_text(category: str, backend: str, failure_id: str) -> str:
         _BACKEND_UNREACHABLE: "backend is unreachable",
         _BACKEND_SESSION_CLOSED: "backend session closed or crashed",
         _BACKEND_TIMEOUT: "backend timed out",
-        _BACKEND_PROTOCOL_ERROR: "backend protocol/tool error",
+        _BACKEND_PROTOCOL_ERROR: "backend protocol error",
+        _BACKEND_TOOL_ERROR: "backend tool rejected the request",
     }.get(category, "backend failure")
     return f"Haru workspace backend error [{category}]: {backend} {detail}. ref={failure_id}"
 
@@ -139,15 +143,6 @@ def _log_backend_exception(*, backend: str, tool_name: str, category: str, failu
         type(exc).__name__,
         " > ".join(_traceback_frames(exc)) or "<none>",
     )
-
-
-def _result_has_visible_content(result: types.CallToolResult) -> bool:
-    for item in result.content:
-        if isinstance(item, types.TextContent) and item.text.strip():
-            return True
-        if not isinstance(item, types.TextContent):
-            return True
-    return False
 
 
 async def _probe_backend_tools(endpoint: str, timeout_seconds: float = _BACKEND_HEALTH_TIMEOUT_SECONDS) -> tuple[str, BaseException | None]:
@@ -259,16 +254,15 @@ async def delegate_backend_tool(
                     failure_id,
                 )
             return _backend_failure(health_category, backend, failure_id)
-        if not _result_has_visible_content(result):
-            failure_id = uuid4().hex[:12]
-            logger.error(
-                "event=workspace_backend_failure backend=%s tool=%s category=%s failure_id=%s source=empty_tool_error",
-                backend,
-                tool_name,
-                _BACKEND_PROTOCOL_ERROR,
-                failure_id,
-            )
-            return _backend_failure(_BACKEND_PROTOCOL_ERROR, backend, failure_id)
+        failure_id = uuid4().hex[:12]
+        logger.error(
+            "event=workspace_backend_failure backend=%s tool=%s category=%s failure_id=%s source=tool_error",
+            backend,
+            tool_name,
+            _BACKEND_TOOL_ERROR,
+            failure_id,
+        )
+        return _backend_failure(_BACKEND_TOOL_ERROR, backend, failure_id)
 
     return result
 
