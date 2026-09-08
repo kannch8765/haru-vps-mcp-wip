@@ -15,7 +15,7 @@ from .settings import SERVICE_NAME, Settings
 
 logger = logging.getLogger(__name__)
 _BACKEND_CALL_TIMEOUT_SECONDS: Final[float] = 30.0
-_FILE_IMPORT_CALL_TIMEOUT_SECONDS: Final[float] = 90.0
+_FILE_TRANSFER_CALL_TIMEOUT_SECONDS: Final[float] = 90.0
 
 
 class HealthResult(TypedDict):
@@ -68,6 +68,23 @@ async def delegate_backend_tool(
         return _backend_failure()
 
 
+async def delegate_backend_resource(
+    endpoint: str,
+    uri: str,
+    *,
+    timeout_seconds: float = _FILE_TRANSFER_CALL_TIMEOUT_SECONDS,
+) -> types.ReadResourceResult:
+    try:
+        with anyio.fail_after(timeout_seconds):
+            async with streamablehttp_client(endpoint) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    return await session.read_resource(uri)
+    except Exception:
+        logger.warning("event=workspace_backend category=unavailable resource=%s", uri)
+        raise RuntimeError("Haru workspace backend unavailable") from None
+
+
 async def workspace_list_directory(settings: Settings, path: str):
     return await delegate_backend_tool(settings.workspace_filesystem_url, "list_directory", {"path": path})
 
@@ -102,7 +119,24 @@ async def workspace_import_chatgpt_file(
         settings.workspace_file_ingress_url,
         "import_chatgpt_file",
         {"file": dict(file), "destination": destination, "overwrite": overwrite},
-        timeout_seconds=_FILE_IMPORT_CALL_TIMEOUT_SECONDS,
+        timeout_seconds=_FILE_TRANSFER_CALL_TIMEOUT_SECONDS,
+    )
+
+
+async def workspace_prepare_file_export(settings: Settings, path: str):
+    return await delegate_backend_tool(
+        settings.workspace_file_ingress_url,
+        "prepare_workspace_file_export",
+        {"path": path},
+        timeout_seconds=_FILE_TRANSFER_CALL_TIMEOUT_SECONDS,
+    )
+
+
+async def workspace_read_file_export_resource(settings: Settings, token: str):
+    return await delegate_backend_resource(
+        settings.workspace_file_ingress_url,
+        f"haru-workspace-file://export/{token}",
+        timeout_seconds=_FILE_TRANSFER_CALL_TIMEOUT_SECONDS,
     )
 
 

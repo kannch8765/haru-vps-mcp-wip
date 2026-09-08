@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Workspace-local MCP child for importing ChatGPT-provided file references.
+"""Workspace-local MCP child for bounded ChatGPT file transfer.
 
 The gateway and workspace proxy remain loopback-only. This child runs inside
 the workspace service, where the reference composition has network egress and
-write access only to the bounded workspace root.
+read/write access only to the bounded workspace root.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import http.client
 import ipaddress
+import mimetypes
 import os
 import re
 import socket
@@ -26,6 +29,8 @@ MAX_FILE_BYTES = 100 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 60.0
 MAX_REDIRECTS = 3
 STREAM_CHUNK_BYTES = 1024 * 1024
+_EXPORT_RESOURCE_TEMPLATE = "haru-workspace-file://export/{token}"
+_MAX_EXPORT_TOKEN_CHARS = 8192
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _OPENAI_AZURE_BLOB_HOST = re.compile(
     r"^oaisdmntpr[a-z0-9]{2,40}\.blob\.core\.windows\.net$"
@@ -135,6 +140,69 @@ def _safe_destination(root: Path, destination: str) -> Path:
     if not parent.is_relative_to(workspace):
         raise ValueError("destination must stay inside the workspace root")
     return parent / relative.name
+
+
+def _safe_source(root: Path, source: str) -> Path:
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("path is required")
+    relative = Path(source)
+    if relative.is_absolute():
+        raise ValueError("path must be relative to the workspace root")
+    if ".." in relative.parts:
+        raise ValueError("path must not escape the workspace root")
+    if relative.name in {"", ".", ".."}:
+        raise ValueError("path must name a file")
+
+    workspace = root.resolve(strict=True)
+    try:
+        target = (workspace / relative).resolve(strict=True)
+    except FileNotFoundError:
+        raise ValueError("file does not exist") from None
+    if not target.is_relative_to(workspace):
+        raise ValueError("path must stay inside the workspace root")
+    if not target.is_file():
+        raise ValueError("path must name a regular file")
+    return target
+
+
+def prepare_workspace_file_export(path: str) -> dict[str, Any]:
+    root = Path.cwd().resolve(strict=True)
+    target = _safe_source(root, path)
+    size = target.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise ValueError("file exceeds the 100 MiB export limit")
+    return {
+        "path": target.relative_to(root).as_posix(),
+        "name": target.name,
+        "bytes": size,
+        "mime_type": mimetypes.guess_type(target.name)[0] or "application/octet-stream",
+    }
+
+
+def _decode_export_token(token: str) -> str:
+    if not isinstance(token, str) or not token or len(token) > _MAX_EXPORT_TOKEN_CHARS:
+        raise ValueError("invalid workspace export resource token")
+    padding = "=" * (-len(token) % 4)
+    try:
+        raw = base64.b64decode(token + padding, altchars=b"-_", validate=True)
+        path = raw.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        raise ValueError("invalid workspace export resource token") from None
+    if not path:
+        raise ValueError("invalid workspace export resource token")
+    return path
+
+
+def read_workspace_export_resource(token: str) -> bytes:
+    path = _decode_export_token(token)
+    metadata = prepare_workspace_file_export(path)
+    root = Path.cwd().resolve(strict=True)
+    target = _safe_source(root, metadata["path"])
+    with target.open("rb") as handle:
+        data = handle.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("file exceeds the 100 MiB export limit")
+    return data
 
 
 def _read_content_length(response: http.client.HTTPResponse) -> int | None:
@@ -311,6 +379,19 @@ def build_server():
             "must be a relative path whose parent directory already exists."
         ),
     )(import_chatgpt_file)
+    server.tool(
+        name="prepare_workspace_file_export",
+        description=(
+            "Validate a workspace-relative regular file for export and return only "
+            "its bounded metadata."
+        ),
+    )(prepare_workspace_file_export)
+    server.resource(
+        _EXPORT_RESOURCE_TEMPLATE,
+        name="workspace-file-export",
+        description="Bounded workspace file bytes for the Haru gateway.",
+        mime_type="application/octet-stream",
+    )(read_workspace_export_resource)
     return server
 
 

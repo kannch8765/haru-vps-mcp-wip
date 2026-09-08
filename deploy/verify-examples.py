@@ -22,7 +22,7 @@ def require_lines(text: str, expected: tuple[str, ...], label: str) -> None:
 
 def _verify_public_page() -> None:
     page = (ROOT / "docs" / "index.html").read_text()
-    required = ("filesystem", "shell", "file import", "file-ingress")
+    required = ("filesystem", "shell", "file transfer", "file-ingress")
     missing = [term for term in required if term not in page]
     if missing:
         raise SystemExit(f"docs/index.html: missing current workspace capabilities: {missing}")
