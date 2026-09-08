@@ -33,7 +33,7 @@ def _classify_exception(exc: BaseException) -> str:
             if preferred in categories:
                 return preferred
         return "session_closed"
-    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError, httpx.TimeoutException)):
         return "timeout"
     if isinstance(exc, (httpx.ConnectError, httpx.NetworkError, ConnectionError)):
         return "unreachable"
@@ -83,7 +83,7 @@ async def probe_all(host: str, port: int, backend_names: list[str], timeout_seco
 async def _wait_or_stop(stop_requested: asyncio.Event, delay_seconds: float) -> None:
     try:
         await asyncio.wait_for(stop_requested.wait(), timeout=delay_seconds)
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         pass
 
 
@@ -108,7 +108,7 @@ async def _terminate_proxy_group(process: asyncio.subprocess.Process, grace_seco
     try:
         await asyncio.wait_for(process.wait(), timeout=grace_seconds)
         return
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         pass
     try:
         os.killpg(process.pid, signal.SIGKILL)
@@ -116,7 +116,7 @@ async def _terminate_proxy_group(process: asyncio.subprocess.Process, grace_seco
         return
     try:
         await asyncio.wait_for(process.wait(), timeout=max(1.0, grace_seconds))
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         logger.error("event=workspace_supervisor category=proxy_stop_timeout")
 
 
